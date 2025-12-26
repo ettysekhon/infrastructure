@@ -1,11 +1,8 @@
-# Terraform – Identity & Workload Identity Federation (GCP)
+# Terraform – Shared Infrastructure (GCP)
 
-This repository contains the **foundational Google Cloud identity infrastructure**
-used across multiple application repositories.
+This repository contains the **foundational Google Cloud infrastructure** used across multiple application repositories.
 
-The primary objective is to provide a **secure, reusable, and auditable**
-Workload Identity Federation (WIF) setup for GitHub Actions without using
-long-lived service account keys.
+The primary objective is to provide **secure, reusable, and auditable** infrastructure components, including Workload Identity Federation (WIF), GKE Autopilot clusters, and Artifact Registries.
 
 ---
 
@@ -16,6 +13,8 @@ This repo owns **shared, low-churn infrastructure**, specifically:
 - GitHub Actions → GCP authentication via **Workload Identity Federation**
 - The Google Cloud service account used by CI/CD pipelines
 - The backing GCS bucket used for Terraform remote state
+- **GKE Autopilot** clusters for containerised workloads
+- **Artifact Registry** repositories for container images
 
 This infrastructure is intentionally separated from application repositories
 to avoid duplication, drift, and accidental privilege escalation.
@@ -26,17 +25,34 @@ to avoid duplication, drift, and accidental privilege escalation.
 
 ```text
 terraform/
+├── artifact-registry/ # Artifact Registry configuration
+│   ├── backend.tf
+│   ├── main.tf
+│   ├── providers.tf
+│   └── variables.tf
+│
 ├── bootstrap/ # One-time bootstrap (remote state bucket)
-│ ├── main.tf
-│ └── .terraform.lock.hcl
+│   ├── main.tf
+│   └── .terraform.lock.hcl
+│
+├── gke-autopilot/ # GKE Autopilot cluster
+│   ├── Makefile
+│   ├── README.md
+│   ├── main.tf
+│   ├── outputs.tf
+│   ├── tests/
+│   └── variables.tf
 │
 ├── identity/ # WIF + Service Account
-│ ├── main.tf
-│ ├── providers.tf
-│ ├── versions.tf
-│ ├── variables.tf
-│ ├── outputs.tf
-│ └── .terraform.lock.hcl
+│   ├── main.tf
+│   ├── providers.tf
+│   ├── versions.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── .terraform.lock.hcl
+│
+└── modules/ # Shared modules
+    └── artifact-registry/
 ```
 
 Each directory under `terraform/` is a **stand-alone Terraform root module** with its own backend and provider lock file.
@@ -92,6 +108,32 @@ terraform apply
 -var="github_owner=<GITHUB_ORG_OR_USER>"
 ```
 
+---
+
+## GKE Autopilot
+
+The `gke-autopilot` module provisions a regional, secure-by-default Kubernetes cluster.
+
+- **Autopilot Mode**: Enabled
+- **Network**: Private nodes (default)
+- **Security**: Workload Identity enabled
+
+Example:
+
+```bash
+cd terraform/gke-autopilot
+terraform init
+terraform apply -var="project_id=<PROJECT_ID>"
+```
+
+---
+
+## Artifact Registry
+
+The `artifact-registry` module creates repositories for storing Docker images.
+
+- **Format**: Docker
+- **Cleanup Policies**: Configurable
 
 ---
 
