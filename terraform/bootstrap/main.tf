@@ -1,5 +1,6 @@
 terraform {
   required_version = ">= 1.14.0"
+  backend "gcs" {}
 
   required_providers {
     google = {
@@ -10,14 +11,16 @@ terraform {
 }
 
 variable "project_id" {
-  type        = string
-  description = "GCP project ID"
+  type = string
 }
 
 variable "location" {
-  type        = string
-  default     = "EU"
-  description = "GCS bucket location"
+  type    = string
+  default = "EU"
+}
+
+locals {
+  state_bucket_name = "tf-state-${var.project_id}"
 }
 
 provider "google" {
@@ -25,7 +28,7 @@ provider "google" {
 }
 
 resource "google_storage_bucket" "terraform_state" {
-  name     = "tf-state-simple-gcp-data-pipeline"
+  name     = local.state_bucket_name
   location = var.location
   project  = var.project_id
 
@@ -42,4 +45,12 @@ resource "google_storage_bucket" "terraform_state" {
 
 output "bucket_name" {
   value = google_storage_bucket.terraform_state.name
+}
+
+output "bucket_url" {
+  value = google_storage_bucket.terraform_state.url
+}
+
+output "project_id" {
+  value = var.project_id
 }

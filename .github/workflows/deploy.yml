@@ -8,6 +8,9 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -28,4 +31,4 @@ jobs:
       - name: Verify auth
         run: |
           gcloud auth list
-          gcloud projects describe simple-gcp-data-pipeline
+          gcloud projects describe ${{ env.GCP_PROJECT_ID }}

@@ -1,198 +1,110 @@
-# Terraform – Shared Infrastructure (GCP)
+# Infrastructure
 
-This repository contains the **foundational Google Cloud infrastructure** used across multiple application repositories.
+Shared GCP infrastructure for platform services. Manages GKE, Artifact Registry, and GitHub Actions authentication via Workload Identity Federation.
 
-The primary objective is to provide **secure, reusable, and auditable** infrastructure components, including Workload Identity Federation (WIF), GKE Autopilot clusters, and Artifact Registries.
+## Quick Start
 
----
+```bash
+cd terraform
 
-## What This Repository Is
+make validate  # Plan all stacks
+make apply     # Apply all stacks
+make format    # Format terraform files
+make clean     # Remove .terraform dirs
+```
 
-This repo owns **shared, low-churn infrastructure**, specifically:
+## Architecture
 
-- GitHub Actions → GCP authentication via **Workload Identity Federation**
-- The Google Cloud service account used by CI/CD pipelines
-- The backing GCS bucket used for Terraform remote state
-- **GKE Autopilot** clusters for containerised workloads
-- **Artifact Registry** repositories for container images
+```text
+config ─────────────────────────────────────────────────────────────
+   │    Single source of truth: project_id, region, environment
+   │
+   ├─► identity ──► WIF provider, service account
+   │
+   ├─► cluster ──► cluster endpoint, CA cert
+   │       │
+   │       └─► namespaces ──► auth-platform, meal-planner
+   │
+   └─► artifact-registry ──► container registry URL
+```
 
-This infrastructure is intentionally separated from application repositories
-to avoid duplication, drift, and accidental privilege escalation.
+All stacks read from upstream via `terraform_remote_state`. No value re-derivation.
 
----
-
-## Repository Structure
+## Structure
 
 ```text
 terraform/
-├── artifact-registry/ # Artifact Registry configuration
-│   ├── backend.tf
-│   ├── main.tf
-│   ├── providers.tf
-│   └── variables.tf
-│
-├── bootstrap/ # One-time bootstrap (remote state bucket)
-│   ├── main.tf
-│   └── .terraform.lock.hcl
-│
-├── gke-autopilot/ # GKE Autopilot cluster
-│   ├── Makefile
-│   ├── README.md
-│   ├── main.tf
-│   ├── outputs.tf
-│   ├── tests/
-│   └── variables.tf
-│
-├── identity/ # WIF + Service Account
-│   ├── main.tf
-│   ├── providers.tf
-│   ├── versions.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   └── .terraform.lock.hcl
-│
-└── modules/ # Shared modules
-    └── artifact-registry/
+├── Makefile              # Common commands
+├── validate.sh           # Validation script
+├── backend.hcl           # State bucket config
+├── config/               # Source of truth
+│   └── terraform.tfvars  # <-- Edit this for project config
+├── bootstrap/            # Creates state bucket (run once)
+├── identity/             # GitHub Actions WIF
+├── cluster/              # Kubernetes cluster (spot nodes, zonal)
+├── artifact-registry/    # Container registry
+├── namespaces/           # K8s namespaces
+└── modules/              # Shared modules
 ```
 
-Each directory under `terraform/` is a **stand-alone Terraform root module** with its own backend and provider lock file.
-
-This is deliberate and follows HashiCorp best practice.
-
----
-
-## Terraform Versioning
-
-- Terraform `>= 1.14`
-- Google provider `~> 7.x`
-- Provider versions are locked per root module via `.terraform.lock.hcl`
-
-Lock files **must be committed**.
-
----
-
-## Bootstrap (Run Once)
-
-The `bootstrap` module creates the GCS bucket used for remote state.
-
-Run this **once per project**:
+## Bootstrap (First Time Only)
 
 ```bash
 cd terraform/bootstrap
 terraform init
-terraform apply -var="project_id=<PROJECT_ID>"
+terraform apply -var="project_id=YOUR_PROJECT"
 ```
 
-The bucket is protected with `prevent_destroy = true`.
+Then run `make apply` from the terraform directory.
 
----
+## Configuration
 
-## Identity (Workload Identity Federation)
+All project config lives in `terraform/config/terraform.tfvars`:
 
-The `identity` module creates:
-
-- A Workload Identity Pool
-- A GitHub OIDC provider
-- A service account for CI/CD
-- IAM bindings allowing GitHub Actions to impersonate the service account
-
-This module is **idempotent** and safe to re-apply.
-
-### Example
-
-```bash
-cd terraform/identity
-terraform init
-terraform apply
--var="project_id=<PROJECT_ID>"
--var="github_owner=<GITHUB_ORG_OR_USER>"
+```hcl
+project_id     = "your-gcp-project-id"
+project_number = "123456789012"
+github_owner   = "your-github-org"
+environment    = "dev"
+region         = "europe-west2"
 ```
 
----
+## Migrating to New GCP Project
 
-## GKE Autopilot
+Update two files:
 
-The `gke-autopilot` module provisions a regional, secure-by-default Kubernetes cluster.
+1. `terraform/config/terraform.tfvars` — project values
+2. `terraform/backend.hcl` — state bucket name
 
-- **Autopilot Mode**: Enabled
-- **Network**: Private nodes (default)
-- **Security**: Workload Identity enabled
+Then update GitHub secrets: `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_WIF_SA`
 
-Example:
-
-```bash
-cd terraform/gke-autopilot
-terraform init
-terraform apply -var="project_id=<PROJECT_ID>"
-```
-
----
-
-## Artifact Registry
-
-The `artifact-registry` module creates repositories for storing Docker images.
-
-- **Format**: Docker
-- **Cleanup Policies**: Configurable
-
----
+Re-run bootstrap, then `make apply`.
 
 ## Outputs
 
-The following outputs are intentionally exposed for consumption by
-application repositories:
+Exposed for application repos:
 
-- `service_account_email`
-- `wif_provider`
+| Stack             | Output                  | Description             |
+|-------------------|-------------------------|-------------------------|
+| identity          | `wif_provider`          | Full WIF provider path  |
+| identity          | `service_account_email` | GitHub Actions SA       |
+| cluster           | `cluster_endpoint`      | K8s API endpoint        |
+| artifact-registry | `repository_url`        | Docker registry URL     |
+| namespaces        | `namespace_*`           | Created namespace names |
 
-These values are injected into GitHub Actions as secrets.
+## Multi-Environment
 
----
+Use workspace prefixes:
 
-## State Management
+```bash
+terraform init -backend-config=../backend.hcl -backend-config="prefix=prod/platform/config"
+```
 
-- Terraform state is stored in **Google Cloud Storage**
-- Local state files are never committed
-- State locking and versioning are enabled
+Or separate backend files: `backend-dev.hcl`, `backend-prod.hcl`
 
-This repository assumes **one state bucket per GCP project**.
+## Security
 
----
-
-## Importing Existing Infrastructure
-
-If identity resources already exist (e.g. created manually via `gcloud`),
-they **must be imported** before applying Terraform.
-
-This is expected behaviour and not an error.
-
----
-
-## Security Notes
-
-- No service account keys are created
-- Authentication uses short-lived OIDC tokens
-- Access is restricted by GitHub repository owner
-- Fine-grained repository scoping can be added if required
-
----
-
-## Intended Usage Pattern
-
-- This repo is applied rarely
-- Application repos reference its outputs
-- CI/CD pipelines authenticate via WIF
-- No application repo creates identity infrastructure
-
-This separation is intentional.
-
----
-
-## Ownership
-
-This repository is considered **platform infrastructure**.
-
-Changes should be:
-    - Reviewed carefully
-    - Applied deliberately
-    - Communicated to dependent repositories
+- No service account keys — OIDC tokens only
+- WIF scoped to GitHub owner
+- State bucket versioning enabled
+- Deletion protection on state bucket
